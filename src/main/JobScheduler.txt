@@ -1,0 +1,127 @@
+Job-Acceptance
+
+QPS = 100/minute
+1. Multiple servers based on load (Round robin load balancing mechanism)
+2. Database : Can use multimaster so that on failover, we dont loose data.
+
+
+Job-Manager (Discarded)
+1. Jobs to maintain in priority queue - capacity = N
+2. PQ server will pull the jobs from Job Acceptance server.
+3. In case job acceptance server goes down (Not taking care)
+4. In case PQ servers goes down
+    i. Whenever it is up....again pull the jobs which has to be executed in order.
+
+
+Resource-Manager
+1. Resource-Job database
+2. Will maintain heartbeat of each row.
+3. Job-Execution nodes call directly to get the resource-job to be executed.
+
+Job-Execution-Manager
+1. Number of nodes or servers = Number of resources available
+2. Job status
+    i. Pending
+    ii. InProgress
+    iii. Failed
+    iv. Completed
+    v. Rejected
+
+3. Call Job-Manager to get a Job to be executed
+4. Call Resource-Manager available for the job to be executed
+5. Persist in Resource-Job DB with status - InProgress and RetryNumber = 0
+7. Start executing tasks (For Each Node)
+    i. On complete - update the status in Resource-Job DB
+                   - update the status in Job DB
+                   - Free up the Resource
+
+    ii. On Fail    - update the status in Resource-job DB
+                   - Free up the Resource
+                   - This job will again be taken up with retry mechanism based on point 6
+
+    iii. In Progress (System wents down)
+                   - Resource Node is continuously sending heartbeat which states the health of the node as well as job
+
+    iv. Rejected   - After X number of retry, I move the job to Rejected state.
+
+
+
+job - id, description, execution_time, service_time, status
+resource - id, name
+Job_resource -
+    id,
+    job_id,
+    resource_id,
+    original_execution_time,
+    service_time,
+    actual_execution_time,
+    expected_finish_time,
+    actual_finish_time,
+    last_heartbeat_time,
+    retry_number
+    status
+
+Queries:
+
+1. Pick Jobs
+
+Select j.id, j.execution_time, j.service_time, j.status from job j
+left join job_resource jr for update on j.id = jr.job_id
+where jr.resource_id is null or (jr.status in (InProgress, Failed)
+&& jr.last_heartbeat_time > Threshold
+&& retry_number < Threshold)
+order by j.execution_time limit 1 ;
+
+2. Updates in job and job_resource
+i. Update job set status = Inprogress where id = x;
+ii Update job_resource set
+    status = InProgress ,
+    resourceId = y,
+    retry_number = retry_number+1
+    actual_execution_time = currtime();
+    expected_finish_time = currtime() + z;
+    where job_id = x;
+
+
+3. Update and select together
+
+Update job_resource set
+    status = InProgress ,
+    resourceId = y,
+    retry_number = retry_number+1
+    actual_execution_time = currtime();
+    expected_finish_time = currtime() + z;
+    where job_id = (
+    Select j.id, j.execution_time, j.service_time, j.status from job j
+    left join job_resource jr for update on j.id = jr.job_id
+    where jr.resource_id is null or (jr.status in (InProgress, Failed)
+    && jr.last_heartbeat_time > Threshold
+    && retry_number < Threshold)
+    order by j.execution_time limit 1
+    );
+
+4. Direct update
+
+Update job_resource set
+    status = InProgress ,
+    resourceId = y,
+    retry_number = retry_number+1
+    actual_execution_time = currtime();
+    expected_finish_time = currtime() + service_time;
+    last_heartbeat_time = currtime()
+    where resource_id is null or (jr.status in (InProgress, Failed)
+          && jr.last_heartbeat_time > Threshold
+          && retry_number < Threshold
+          )
+    order by j.execution_time limit 1;
+
+
+Select * from job_resource where resource_id = y
+    and status = Inprogress
+    order by id desc limit 1;
+
+
+
+
+
+
